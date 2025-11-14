@@ -5,62 +5,45 @@ import java.util.*;
 import javax.swing.*;
 import javax.swing.filechooser.*;
 
-public class FamilyTree {
+/**
+ * Generic family tree where node "names" can be any type T. A converter
+ * function (String->T) is used when reading names from the input file.
+ */
+public class FamilyTree<T> {
 
-    private static class TreeNode {
-        private String name;
-        private TreeNode parent;
-        private ArrayList<TreeNode> children;
+    private static class TreeNode<T> {
+        private final T name;
+        private TreeNode<T> parent;
+        private final ArrayList<TreeNode<T>> children;
 
-        TreeNode(String name) {
+        TreeNode(T name) {
             this.name = name;
-            children = new ArrayList<>();
+            this.children = new ArrayList<>();
         }
 
-        String getName() {
+        T getName() {
             return name;
         }
 
-        void addChild(TreeNode childNode) {
+        void addChild(TreeNode<T> childNode) {
             TreeNode.this.children.add(childNode);
             childNode.parent = TreeNode.this;
-            // Add childNode to this node's children list. Also
-            // set childNode's parent to this node.
         }
 
-        // Searches subtree at this node for a node
-        // with the given name. Returns the node, or null if not found.
-        TreeNode getNodeWithName(String targetName) {
-            // Does this node have the target name?
-            if (name.equals(targetName))
-                return this;   
-                    
-            // No, recurse. Check all children of this node.
-            for (TreeNode child: children)
-            {
-                // If child.getNodeWithName(targetName) returns a non-null node,
-                // then that's the node we're looking for. Return it.
-                if ( child.getNodeWithName(targetName) != null )   // Fill in condition
-                {
-                    return child.getNodeWithName(targetName);
-                }
+        TreeNode<T> getNodeWithName(T targetName) {
+            if (name.equals(targetName)) return this;
+            for (TreeNode<T> child : children) {
+                TreeNode<T> found = child.getNodeWithName(targetName);
+                if (found != null) return found;
             }
-            
-            // Not found anywhere.
             return null;
         }
 
-        // Returns a list of ancestors of this TreeNode, starting with this node’s
-        // parent and
-        // ending with the root. Order is from recent to ancient.
-            ArrayList<TreeNode> collectAncestorsToList() {
-            ArrayList<TreeNode> ancestors = new ArrayList<>();
-
-            // ????? Collect ancestors of this TreeNode into the array list. HINT: going up
-            // the nodes of a tree is like traversing a linked list. If that isn’t clear,
-            // draw a tree, mark any leaf node, and then mark its ancestors in order from
-            // recent to ancient. Expect a question about this on the final exam.
-
+        ArrayList<TreeNode<T>> collectAncestorsToList() {
+            ArrayList<TreeNode<T>> ancestors = new ArrayList<>();
+            for (TreeNode<T> cur = this.parent; cur != null; cur = cur.parent) {
+                ancestors.add(cur);
+            }
             return ancestors;
         }
 
@@ -69,22 +52,28 @@ public class FamilyTree {
         }
 
         private String toStringWithIndent(String indent) {
-            String s = indent + name + "\n";
-            indent += "  ";
-            for (TreeNode childNode : children)
-                s += childNode.toStringWithIndent(indent);
-            return s;
+            StringBuilder sb = new StringBuilder();
+            sb.append(indent).append(name).append("\n");
+            String childIndent = indent + "  ";
+            for (TreeNode<T> childNode : children)
+                sb.append(childNode.toStringWithIndent(childIndent));
+            return sb.toString();
         }
     }
 
-    private TreeNode root;
-    private Map<String, TreeNode> nodesByName = new HashMap<>();
+    private TreeNode<T> root;
+    private final Map<T, TreeNode<T>> nodesByName = new HashMap<>();
+    private final java.util.function.Function<String, T> converter;
 
-    //
-    // Displays a file browser so that user can select the family tree file.
-    //
+    @SuppressWarnings("unchecked")
     public FamilyTree() throws IOException, TreeException {
-        // User chooses input file. This block doesn't need any work.
+        // default converter assumes T is String
+        this((String s) -> (T) s);
+    }
+
+    public FamilyTree(java.util.function.Function<String, T> converter) throws IOException, TreeException {
+        this.converter = Objects.requireNonNull(converter);
+
         FileNameExtensionFilter filter = new FileNameExtensionFilter("Family tree text files", "txt");
         File dirf = new File("data");
         if (!dirf.exists()) dirf = new File(".");
@@ -94,98 +83,83 @@ public class FamilyTree {
         if (chooser.showOpenDialog(null) != JFileChooser.APPROVE_OPTION) System.exit(1);
         File treeFile = chooser.getSelectedFile();
 
-        // Parse the input file. Create a FileReader that reads treeFile. Create a BufferedReader
-        // that reads from the FileReader.
-        FileReader fr = new FileReader(treeFile);
-        BufferedReader br = new BufferedReader(fr);
-        String line;
-        while ((line = br.readLine()) != null)
-            addLine(line);
-        br.close();
-        fr.close();
+        try (FileReader fr = new FileReader(treeFile); BufferedReader br = new BufferedReader(fr)) {
+            String line;
+            while ((line = br.readLine()) != null) addLine(line);
+        }
     }
 
-    //
     // Line format is "parent:child1,child2 ..."
-    // Throws TreeException if line is illegal.
-    //
-    private void addLine(String line) throws TreeException
-    { 
+    private void addLine(String line) throws TreeException {
         if (line.isEmpty() || line.startsWith("#")) return;
         int colonIndex = line.indexOf(':');
-        if (colonIndex <= 0 || colonIndex == line.length()-1) {
+        if (colonIndex <= 0 || colonIndex == line.length() - 1) {
             throw new TreeException("Bad line (no colon or no children): " + line);
         }
-        String parentName = line.substring(0, colonIndex).trim();
-        String[] kids = line.substring(colonIndex+1).split(",");
+        String parentNameStr = line.substring(0, colonIndex).trim();
+        String[] kids = line.substring(colonIndex + 1).split(",");
 
-        if (parentName.isEmpty()) throw new TreeException("Empty parent name: " + line);
+        if (parentNameStr.isEmpty()) throw new TreeException("Empty parent name: " + line);
 
-        TreeNode parent = nodesByName.get(parentName);
+        T parentName = converter.apply(parentNameStr);
+
+        TreeNode<T> parent = nodesByName.get(parentName);
         if (parent == null) {
-            parent = new TreeNode(parentName);
+            parent = new TreeNode<>(parentName);
             nodesByName.put(parentName, parent);
             if (root == null) root = parent; // first seen becomes root; may be updated later
         }
 
         for (String kidRaw : kids) {
-            String childName = kidRaw.trim();
-            if (childName.isEmpty()) continue;
-            TreeNode child = nodesByName.get(childName);
+            String childNameStr = kidRaw.trim();
+            if (childNameStr.isEmpty()) continue;
+            T childName = converter.apply(childNameStr);
+            TreeNode<T> child = nodesByName.get(childName);
             if (child == null) {
-                child = new TreeNode(childName);
+                child = new TreeNode<>(childName);
                 nodesByName.put(childName, child);
             }
             if (child.parent != null && child.parent != parent) {
-                throw new TreeException("Child " + childName + " already has a different parent " + child.parent.getName());
+                throw new TreeException("Child " + childNameStr + " already has a different parent " + child.parent.getName());
             }
             parent.addChild(child);
         }
 
         // Recompute root: the unique node with no parent if available
-        for (TreeNode n : nodesByName.values()) {
-            if (n.parent == null) { root = n; break; }
+        for (TreeNode<T> n : nodesByName.values()) {
+            if (n.parent == null) {
+                root = n;
+                break;
+            }
         }
     }
 
-    private ArrayList<TreeNode> ancestorsOf(TreeNode node) {
-        ArrayList<TreeNode> chain = new ArrayList<>();
-        for (TreeNode cur = node; cur != null; cur = cur.parent) {
+    private ArrayList<TreeNode<T>> ancestorsOf(TreeNode<T> node) {
+        ArrayList<TreeNode<T>> chain = new ArrayList<>();
+        for (TreeNode<T> cur = node; cur != null; cur = cur.parent) {
             chain.add(cur);
         }
         return chain;
     }
+
     // Returns the "deepest" node that is an ancestor of the node named name1, and
     // also is an
     // ancestor of the node named name2.
-    //
-    // "Depth" of a node is the "distance" between that node and the root. The depth
-    // of the root is 0. The
-    // depth of the root's immediate children is 1, and so on.
-    //
-    TreeNode getMostRecentCommonAncestor(String name1, String name2) throws TreeException
-    {
-        // Get nodes for input names.
-        TreeNode n1 = nodesByName.get(name1);
-        TreeNode n2 = nodesByName.get(name2);        // node whose name is name1
-        if (n1 == null)
-            throw new TreeException("Node not found: " + name1);
-        if (n2 == null)
-            throw new TreeException("Node not found: " + name2);
-        
-        // Get ancestors of node1 and node2.
-        ArrayList<TreeNode> ancestorsOf1 = ancestorsOf(n1);
-        ArrayList<TreeNode> ancestorsOf2 = ancestorsOf(n2);
-        
-        // Check members of ancestorsOf1 in order until you find a node that is also
-        // an ancestor of 2. 
-        for (TreeNode n : ancestorsOf1)
-            if (ancestorsOf2.contains(n1))
-                return n1;
-        
-        // No common ancestor.
+    TreeNode<T> getMostRecentCommonAncestor(T name1, T name2) throws TreeException {
+        TreeNode<T> n1 = nodesByName.get(name1);
+        TreeNode<T> n2 = nodesByName.get(name2);
+        if (n1 == null) throw new TreeException("Node not found: " + name1);
+        if (n2 == null) throw new TreeException("Node not found: " + name2);
+
+        ArrayList<TreeNode<T>> ancestorsOf1 = ancestorsOf(n1);
+        ArrayList<TreeNode<T>> ancestorsOf2 = ancestorsOf(n2);
+
+        for (TreeNode<T> n : ancestorsOf1) {
+            if (ancestorsOf2.contains(n)) return n;
+        }
         return null;
     }
+
     @Override
     public String toString() {
         return "Family Tree:\n\n" + root;
@@ -193,9 +167,9 @@ public class FamilyTree {
 
     public static void main(String[] args) {
         try {
-            FamilyTree tree = new FamilyTree();
+            FamilyTree<String> tree = new FamilyTree<>();
             System.out.println("Tree:\n" + tree + "\n**************\n");
-            TreeNode ancestor = tree.getMostRecentCommonAncestor("Bilbo", "Frodo");
+            TreeNode<String> ancestor = tree.getMostRecentCommonAncestor("Bilbo", "Frodo");
             System.out.println("Most recent common ancestor of Bilbo and Frodo is " + ancestor.getName());
         } catch (IOException x) {
             System.out.println("IO trouble: " + x.getMessage());
